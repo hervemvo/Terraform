@@ -1,0 +1,50 @@
+trigger:
+- main
+
+stages:
+- stage: Build
+  jobs:
+  - job: BuildDockerImage
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+    - task: Docker@2
+      inputs:
+        command: 'buildAndPush'
+        repository: 'nexus-repo/my-app'
+        dockerfile: 'Dockerfile'
+        containerRegistry: 'Nexus'
+        tags: '$(Build.BuildId)'
+      displayName: 'Build and Push Docker Image'
+
+- stage: Terraform
+  dependsOn: Build
+  jobs:
+  - job: ApplyTerraform
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+    - script: |
+        cd terraform
+        terramate generate
+        terraform init
+        terraform apply -auto-approve
+      displayName: 'Apply Terraform configurations'
+
+- stage: Deploy
+  dependsOn: Terraform
+  jobs:
+  - job: DeployK8s
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+    - script: |
+        cd k8s
+        helm upgrade --install my-app ./my-app-chart --set image.tag=$(Build.BuildId)
+      displayName: 'Deploy application with Helm'
+    - script: |
+        argocd app sync my-app
+      displayName: 'Sync application with Argo CD'
